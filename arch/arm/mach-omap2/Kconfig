@@ -476,6 +476,16 @@ config OMAP4_HSOTG_ED_CORRECTION
 	  order to improve Eye Diagramm. On 4430 CPUs this should
 	  improve Eye Diagram at least 8%.
 
+config OMAP_RAM_CONSOLE
+        bool "Enable OMAP support for Android RAM console"
+        depends on ANDROID_RAM_CONSOLE
+        help
+          Select this option to enable Android RAM console support on OMAP.
+          This allows saving the kernel printk messages to a buffer in RAM, so
+          that after a kernel panic they can be viewed in the next kernel
+          invocation, by accessing /proc/last_kmsg
+          NOTE: Board file needs to invoke relevant api to enable the support
+
 endmenu
 
 config TUNA_ASRAM

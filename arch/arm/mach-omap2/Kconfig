@@ -398,8 +398,6 @@ config OMAP4_PPA_CPU1_ONLINE_BUG
 	  If, on the other hand, you do not understand the change, leave the
 	  default as enabled.
 
-endmenu
-
 config FORCE_FAST_CHARGE
 	bool "Force AC charge mode at will"
 	default y
@@ -413,5 +411,13 @@ config OMAP_OVERRIDE_MPUTRIM
 	help
 	  Override factory-set trim value for MPU DPLL to allow locking at 
 	  rates >2.4GHz (required for MPU frequencies >1.2GHz).
+
+config OMAP_REGULATOR_VOLTCHANGE
+	bool "Allow voltage changes for regulators"
+	default n
+	help
+	  Allow voltage changes for regulators.
+
+endmenu
 
 endif

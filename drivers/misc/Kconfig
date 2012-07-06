@@ -604,4 +604,10 @@ config VIBRATOR_CONTROL
 	help
 	  Say Y here to enable Vibrator Control
 
+config CUSTOM_VOLTAGE
+	bool "Support for Custom Voltage"
+	default y
+	help
+	  Say Y here to enable Custom Voltage
+
 endif # MISC_DEVICES

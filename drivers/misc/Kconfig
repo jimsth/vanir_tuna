@@ -592,4 +592,10 @@ config OMAP_TEMP_CONTROL
 	help
 	  Enable support for Temp Control
 
+config SOUND_CONTROL
+	bool "Enable support for Sound Control"
+	default y
+	help
+	  Enable support for Sound Control
+
 endif # MISC_DEVICES

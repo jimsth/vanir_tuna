@@ -62,3 +62,4 @@ obj-$(CONFIG_OMAP_TEMP_CONTROL)	+= temp_control.o
 obj-$(CONFIG_CUSTOM_VOLTAGE)	+= custom_voltage.o
 obj-$(CONFIG_BLX)		+= blx.o
 obj-$(CONFIG_SOUND_CONTROL)	+= sound_control.o
+obj-$(CONFIG_TOUCH_WAKE)       += touch_wake.o

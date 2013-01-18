@@ -65,9 +65,11 @@ static DEFINE_MUTEX(omap_cpufreq_lock);
 
 static unsigned int max_thermal;
 static unsigned int max_capped;
+static unsigned int min_capped;
 static unsigned int max_freq;
 static unsigned int current_target_freq;
 static unsigned int screen_off_max_freq;
+static unsigned int screen_on_min_freq;
 static bool omap_cpufreq_ready;
 static bool omap_cpufreq_suspended;
 
@@ -133,6 +135,9 @@ static int omap_cpufreq_scale(unsigned int target_freq, unsigned int cur_freq)
 
 	if (max_capped && freqs.new > max_capped)
 		freqs.new = max_capped;
+
+	if (min_capped && freqs.new < min_capped)
+		freqs.new = min_capped;	
 
 	if ((freqs.old == freqs.new) && (cur_freq = freqs.new))
 		return 0;
@@ -285,12 +290,39 @@ static void omap_cpu_early_suspend(struct early_suspend *h)
 
 	mutex_lock(&omap_cpufreq_lock);
 
-	if (screen_off_max_freq) {
+	if (screen_off_max_freq && min_capped) {
 		max_capped = screen_off_max_freq;
 
 		cur = omap_getspeed(0);
-		if (cur > max_capped)
+
+		if (cur > max_capped) {
 			omap_cpufreq_scale(max_capped, cur);
+		}
+
+		else if (current_target_freq < min_capped) {
+			omap_cpufreq_scale(current_target_freq, cur);
+		}
+
+		min_capped = 0;
+	}
+
+	else if (screen_off_max_freq) {
+		max_capped = screen_off_max_freq;
+
+		cur = omap_getspeed(0);
+
+		if (cur > max_capped) {
+			omap_cpufreq_scale(max_capped, cur);
+		}
+	}
+
+	else if (min_capped) {
+		cur = omap_getspeed(0);
+
+		if (current_target_freq < min_capped) {
+			omap_cpufreq_scale(current_target_freq, cur);
+		}
+		min_capped = 0;
 	}
 
 	mutex_unlock(&omap_cpufreq_lock);
@@ -301,15 +333,42 @@ static void omap_cpu_late_resume(struct early_suspend *h)
 	unsigned int cur;
 
 	mutex_lock(&omap_cpufreq_lock);
+		
+	if (max_capped && screen_on_min_freq) {
+		max_capped = 0;
+		min_capped = screen_on_min_freq;
 
-	if (max_capped) {
+		cur = omap_getspeed(0);
+
+		if (cur < min_capped) {
+			omap_cpufreq_scale(min_capped, cur);
+		}
+
+		else if (cur != current_target_freq) {
+			omap_cpufreq_scale(current_target_freq, cur);
+		}
+	}
+
+	else if (max_capped) {
 		max_capped = 0;
 
 		cur = omap_getspeed(0);
-		if (cur != current_target_freq)
-			omap_cpufreq_scale(current_target_freq, cur);
-	}
 
+		if (cur != current_target_freq) {
+			omap_cpufreq_scale(current_target_freq, cur);
+		}
+	}
+		
+	else if (screen_on_min_freq) {
+		min_capped = screen_on_min_freq;
+
+		cur = omap_getspeed(0);
+
+		if (cur < min_capped) {
+			omap_cpufreq_scale(min_capped, cur);
+		}
+	}		
+				
 	mutex_unlock(&omap_cpufreq_lock);
 }
 
@@ -526,6 +585,51 @@ static struct freq_attr gpu_clock = {
     .show = show_gpu_clock,
 };
 
+static ssize_t show_screen_on_freq(struct cpufreq_policy *policy, char *buf)
+{
+	return sprintf(buf, "%u\n", screen_on_min_freq);
+}
+
+static ssize_t store_screen_on_freq(struct cpufreq_policy *policy,
+	const char *buf, size_t count)
+{
+	unsigned int freq = 0;
+	int ret;
+	int index;
+
+	if (!freq_table)
+		return -EINVAL;
+
+	ret = sscanf(buf, "%u", &freq);
+	if (ret != 1)
+		return -EINVAL;
+
+	mutex_lock(&omap_cpufreq_lock);	
+
+	ret = cpufreq_frequency_table_target(policy, freq_table, freq,
+		CPUFREQ_RELATION_H, &index);
+	if (ret)
+		goto out;
+
+	screen_on_min_freq = freq_table[index].frequency;
+
+	ret = count;
+
+	min_capped = screen_on_min_freq;
+
+out:
+	mutex_unlock(&omap_cpufreq_lock);
+	return ret;
+}
+
+struct freq_attr omap_cpufreq_attr_screen_on_freq = {
+	.attr = { .name = "screen_on_min_freq",
+		  .mode = 0644,
+		},
+	.show = show_screen_on_freq,
+	.store = store_screen_on_freq,
+};
+
 static struct freq_attr *omap_cpufreq_attr[] = {
 	&cpufreq_freq_attr_scaling_available_freqs,
 	&omap_cpufreq_attr_screen_off_freq,
@@ -534,6 +638,7 @@ static struct freq_attr *omap_cpufreq_attr[] = {
 	&omap_UV_mV_table,
 #endif
 	&gpu_clock,
+	&omap_cpufreq_attr_screen_on_freq,
 	NULL,
 };
 

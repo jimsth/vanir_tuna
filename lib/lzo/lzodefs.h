@@ -11,7 +11,8 @@
  *  Richard Purdie <rpurdie@openedhand.com>
  */
 
-#if defined(CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS)
+#if 1 && defined(__arm__) && ((__LINUX_ARM_ARCH__ >= 6) || defined(__ARM_FEATURE_UNALIGNED))
+#define CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS 1
 #define COPY4(dst, src)	\
 		* (u32 *) (void *) (dst) = * (const u32 *) (const void *) (src)
 #else

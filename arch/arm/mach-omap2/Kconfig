@@ -432,6 +432,13 @@ config OMAP_OCFREQS
 	help
 	  Enable O/C frequency slots 1.35-1.8GHz.
 
+config OMAP_UCFREQS
+    bool "Enable 180/230 MPU frequency slot"
+	depends on OMAP_SMARTREFLEX_CUSTOM_SENSOR
+    default n
+    help
+      Enable the 180/230 MPU frequency slot.
+
 endmenu
 
 endif

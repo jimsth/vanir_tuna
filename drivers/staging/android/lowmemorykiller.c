@@ -65,10 +65,41 @@ static unsigned long lowmem_deathpending_timeout;
 			pr_info(x);			\
 	} while (0)
 
+static bool avoid_to_kill(uid_t uid)
+{
+
+    if (uid == 0 || /* root */
+        uid == 1 || /* init */
+        uid == 1001 || /* radio */
+        uid == 1002 || /* bluetooth */
+        uid == 1010 || /* wifi */
+        uid == 1012 || /* install */
+        uid == 1013 || /* media */
+        uid == 1014 || /* dhcp */
+        uid == 1017 || /* keystore */
+        uid == 1019)  /* drm */
+    {
+        return 1;
+    }
+    return 0;
+}
+static bool protected_apps(char *comm)
+{
+    if (strcmp(comm, "d.process.acore") == 0 ||
+        strcmp(comm, "ndroid.systemui") == 0 ||
+        strcmp(comm, "ndroid.contacts") == 0 ||
+        strcmp(comm, "d.process.media") == 0) {
+        return 1;
+    }
+    return 0;
+}
+
 static int lowmem_shrink(struct shrinker *s, struct shrink_control *sc)
 {
 	struct task_struct *tsk;
 	struct task_struct *selected = NULL;
+    const struct cred *cred = current_cred(), *pcred; 
+    unsigned int uid = 0;
 	int rem = 0;
 	int tasksize;
 	int i;
@@ -141,16 +172,25 @@ static int lowmem_shrink(struct shrinker *s, struct shrink_control *sc)
 			    tasksize <= selected_tasksize)
 				continue;
 		}
-		selected = p;
-		selected_tasksize = tasksize;
-		selected_oom_score_adj = oom_score_adj;
-		lowmem_print(2, "select '%s' (%d), adj %d, size %d, to kill\n",
-			     p->comm, p->pid, oom_score_adj, tasksize);
-	}
+        pcred = __task_cred(p);
+        uid = pcred->uid;
+
+        if ((!avoid_to_kill(uid) && !protected_apps(p->comm)) ||
+            tasksize * (long)(PAGE_SIZE / 1024) >= 102400) {
+		    selected = p;
+		    selected_tasksize = tasksize;
+		    selected_oom_score_adj = oom_score_adj;
+            lowmem_print(2, "select '%s' (%d), adj %hd, size %ldkB, to kill\n",
+                    p->comm, p->pid, oom_score_adj, tasksize * (long)(PAGE_SIZE / 1024));
+        } else {
+            lowmem_print(3, "selected skipped '%s' (%d), adj %hd, size %ldkB, no to kill\n",
+                    p->comm, p->pid, oom_score_adj, tasksize * (long)(PAGE_SIZE / 1024));
+	    }
+    }
 	if (selected) {
 		lowmem_print(1, "Killing '%s' (%d), adj %d,\n" \
 				"   to free %ldkB on behalf of '%s' (%d) because\n" \
-				"   cache %ldkB is below limit %ldkB for oom_score_adj %d\n" \
+				"   cache %ldkB is below limit %ldkB for oom_score_adj %hd\n" \
 				"   Free memory is %ldkB above reserved\n",
 			     selected->comm, selected->pid,
 			     selected_oom_score_adj,

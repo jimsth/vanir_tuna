@@ -441,4 +441,13 @@ config OMAP_UCFREQS
 
 endmenu
 
+config TUNA_BIGMEM
+    bool "Additional 55 MB userspace RAM for Tuna"
+	depends on MACH_TUNA
+	default n
+	help
+	  If enabled, approximately 55 MB of additional RAM will be available.
+	  Reclaiming only ~50 MB of RAM from HEAP_TILER is safe and 1080p camera
+	  functions still work.
+
 endif

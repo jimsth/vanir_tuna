@@ -557,11 +557,11 @@ static struct freq_attr omap_UV_mV_table = {
 
 static ssize_t show_gpu_clock(struct cpufreq_policy *policy, char *buf) {
 	struct clk *clk = clk_get(NULL, "dpll_per_m7x2_ck");	
-	return sprintf(buf, "%lu Mhz\n", clk->rate/1000000);
+	return sprintf(buf, "%lu\n", clk->rate/1000);
 }
 
 static struct freq_attr gpu_clock = {
-    .attr = {.name = "gpu_clock",
+    .attr = {.name = "gpu_cur_freq",
 	     .mode=0644,
     },
     .show = show_gpu_clock,
@@ -612,6 +612,18 @@ struct freq_attr omap_cpufreq_attr_screen_on_freq = {
 	.store = store_screen_on_freq,
 };
 
+static ssize_t show_iva_clock(struct cpufreq_policy *policy, char *buf) {
+        struct clk *clk = clk_get(NULL, "dpll_iva_m5x2_ck");
+        return sprintf(buf, "%lu\n", clk->rate/1000);
+}
+
+static struct freq_attr iva_clock = {
+    .attr = {.name = "iva_cur_freq",
+             .mode=0644,
+    },
+    .show = show_iva_clock,
+};
+
 static struct freq_attr *omap_cpufreq_attr[] = {
 	&cpufreq_freq_attr_scaling_available_freqs,
 	&omap_cpufreq_attr_screen_off_freq,
@@ -621,6 +633,7 @@ static struct freq_attr *omap_cpufreq_attr[] = {
 #endif
 	&gpu_clock,
 	&omap_cpufreq_attr_screen_on_freq,
+	&iva_clock,
 	NULL,
 };
 

@@ -96,14 +96,19 @@ static unsigned long timer_rate = DEFAULT_TIMER_RATE;
  */
 #define DEFAULT_ABOVE_HISPEED_DELAY DEFAULT_TIMER_RATE
 static unsigned long above_hispeed_delay_val = DEFAULT_ABOVE_HISPEED_DELAY;
-
-/* Non-zero means indefinite speed boost active */
-static int boost_val;
+/* 500ms - 0.5s */
+#define DEFAULT_BOOSTPULSE_DURATION 500000
 /* Duration of a boot pulse in usecs */
-#define DEFAULT_BOOSTPULSE_DURATION 80000
 static int boostpulse_duration_val = DEFAULT_BOOSTPULSE_DURATION;
 /* End time of boost pulse in ktime converted to usecs */
 static u64 boostpulse_endtime;
+
+/*
+ * The CPU will be boosted to this frequency when the screen is
+ * touched. input_boost needs to be enabled.
+ */
+#define DEFAULT_INPUT_BOOST_FREQ 920000
+static int input_boost_freq = DEFAULT_INPUT_BOOST_FREQ;
 
 /*
  * Max additional time to wait in idle, beyond timer_rate, at speeds above
@@ -350,31 +355,29 @@ static void cpufreq_interactive_timer(unsigned long data)
 	do_div(cputime_speedadj, delta_time);
 	loadadjfreq = (unsigned int)cputime_speedadj * 100;
 	cpu_load = loadadjfreq / pcpu->target_freq;
-	boosted = boost_val || now < boostpulse_endtime;
+	boosted = now < boostpulse_endtime;
 
-	if (cpu_load >= go_hispeed_load || boosted) {
-		if (pcpu->target_freq < hispeed_freq) {
-			new_freq = hispeed_freq;
-		} else {
-			new_freq = choose_freq(pcpu, loadadjfreq);
+	if (cpu_load >= go_hispeed_load) {
+	new_freq = choose_freq(pcpu, loadadjfreq);
 
-			if (new_freq < hispeed_freq)
-				new_freq = hispeed_freq;
-		}
+	if (new_freq < hispeed_freq)
+	new_freq = hispeed_freq;
+	} else if (boosted) {
+	new_freq = input_boost_freq;
 	} else {
-		new_freq = choose_freq(pcpu, loadadjfreq);
+	new_freq = choose_freq(pcpu, loadadjfreq);
 	}
 
 	if (pcpu->target_freq >= hispeed_freq &&
-	    new_freq > pcpu->target_freq &&
-	    now - pcpu->hispeed_validate_time < above_hispeed_delay_val) {
-		trace_cpufreq_interactive_notyet(
-			data, cpu_load, pcpu->target_freq,
-			pcpu->policy->cur, new_freq);
-		goto rearm;
+	new_freq > pcpu->target_freq &&
+	now - pcpu->hispeed_validate_time < above_hispeed_delay_val) {
+	trace_cpufreq_interactive_notyet(
+	data, cpu_load, pcpu->target_freq,
+	pcpu->policy->cur, new_freq);
+	goto rearm;
 	}
 
-	pcpu->hispeed_validate_time = now;
+pcpu->hispeed_validate_time = now;
 
 	if (cpufreq_frequency_table_target(pcpu->policy, pcpu->freq_table,
 					   new_freq, CPUFREQ_RELATION_L,
@@ -584,7 +587,7 @@ static void cpufreq_interactive_boost(void)
 		 * validated.
 		 */
 
-		pcpu->floor_freq = hispeed_freq;
+		pcpu->floor_freq = input_boost_freq;
 		pcpu->floor_validate_time = ktime_to_us(ktime_get());
 	}
 
@@ -826,6 +829,30 @@ static ssize_t store_timer_rate(struct kobject *kobj,
 static struct global_attr timer_rate_attr = __ATTR(timer_rate, 0644,
 		show_timer_rate, store_timer_rate);
 
+static ssize_t show_input_boost_freq(struct kobject *kobj, struct attribute *attr,
+                                     char *buf)
+{
+	return sprintf(buf, "%d\n", input_boost_freq);
+}
+
+static ssize_t store_input_boost_freq(struct kobject *kobj, struct attribute *attr,
+                                      const char *buf, size_t count)
+{
+	int ret;
+	unsigned long val;
+    
+	ret = strict_strtoul(buf, 0, &val);
+	if (ret < 0)
+		return ret;
+    
+	input_boost_freq = val;
+    
+	return count;
+}
+
+static struct global_attr input_boost_freq_attr = __ATTR(input_boost_freq, 0644,
+								show_input_boost_freq, store_input_boost_freq);
+
 static ssize_t show_timer_slack(
 	struct kobject *kobj, struct attribute *attr, char *buf)
 {
@@ -848,36 +875,6 @@ static ssize_t store_timer_slack(
 }
 
 define_one_global_rw(timer_slack);
-
-static ssize_t show_boost(struct kobject *kobj, struct attribute *attr,
-			  char *buf)
-{
-	return sprintf(buf, "%d\n", boost_val);
-}
-
-static ssize_t store_boost(struct kobject *kobj, struct attribute *attr,
-			   const char *buf, size_t count)
-{
-	int ret;
-	unsigned long val;
-
-	ret = kstrtoul(buf, 0, &val);
-	if (ret < 0)
-		return ret;
-
-	boost_val = val;
-
-	if (boost_val) {
-		trace_cpufreq_interactive_boost("on");
-		cpufreq_interactive_boost();
-	} else {
-		trace_cpufreq_interactive_unboost("off");
-	}
-
-	return count;
-}
-
-define_one_global_rw(boost);
 
 static ssize_t store_boostpulse(struct kobject *kobj, struct attribute *attr,
 				const char *buf, size_t count)
@@ -950,8 +947,8 @@ static struct attribute *interactive_attributes[] = {
 	&above_hispeed_delay.attr,
 	&min_sample_time_attr.attr,
 	&timer_rate_attr.attr,
+	&input_boost_freq_attr.attr,
 	&timer_slack.attr,
-	&boost.attr,
 	&boostpulse.attr,
 	&boostpulse_duration.attr,
 	&io_is_busy_attr.attr,

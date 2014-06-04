@@ -127,7 +127,7 @@ EXPORT_SYMBOL_GPL(dirty_writeback_suspend_interval);
 #define DEFAULT_DIRTY_EXPIRE_INTERVAL 200 /* centiseconds */
 unsigned int dirty_expire_interval,
 		resume_dirty_expire_interval;
-suspend_dirty_expire_interval = 1000;
+int suspend_dirty_expire_interval = 1000;
 
 /*
  * Flag that makes the machine dump writes/reads and block dirtyings.

@@ -24,6 +24,7 @@
 #include <linux/uaccess.h>
 #include <linux/poll.h>
 #include <linux/slab.h>
+#include <linux/switch.h>
 #include <linux/time.h>
 #include "logger.h"
 #include "logger_interface.h"
@@ -36,6 +37,13 @@
 
 static unsigned int log_enabled = 1;
 module_param(log_enabled, uint, S_IWUSR | S_IRUGO);
+
+/*
+ * Used to create a sys node with a switch that triggers when event log overflows.
+ * Code that changes the logger_dev is thread-safe because it is protected by the
+ * log_event.mutex
+ */
+static struct switch_dev logger_dev;
 
 /*
  * struct logger_log - represents a specific log, such as 'main' or 'radio'
@@ -68,6 +76,34 @@ struct logger_reader {
 	bool			r_all;	/* reader can read all entries */
 	int			r_ver;	/* reader ABI version */
 };
+
+/*
+ * Defines a log structure with name 'NAME' and a size of 'SIZE' bytes, which
+ * must be a power of two, and greater than
+ * (LOGGER_ENTRY_MAX_PAYLOAD + sizeof(struct logger_entry)).
+ */
+#define DEFINE_LOGGER_DEVICE(VAR, NAME, SIZE) \
+static unsigned char _buf_ ## VAR[SIZE]; \
+static struct logger_log VAR = { \
+  .buffer = _buf_ ## VAR, \
+  .misc = { \
+    .minor = MISC_DYNAMIC_MINOR, \
+    .name = NAME, \
+    .fops = NULL, \
+    .parent = NULL, \
+  }, \
+  .wq = __WAIT_QUEUE_HEAD_INITIALIZER(VAR .wq), \
+  .readers = LIST_HEAD_INIT(VAR .readers), \
+  .mutex = __MUTEX_INITIALIZER(VAR .mutex), \
+  .w_off = 0, \
+  .head = 0, \
+  .size = SIZE, \
+};
+
+DEFINE_LOGGER_DEVICE(log_main, LOGGER_LOG_MAIN, CONFIG_LOGCAT_SIZE*1024)
+DEFINE_LOGGER_DEVICE(log_events, LOGGER_LOG_EVENTS, CONFIG_LOGCAT_SIZE*1024)
+DEFINE_LOGGER_DEVICE(log_radio, LOGGER_LOG_RADIO, CONFIG_LOGCAT_SIZE*1024)
+DEFINE_LOGGER_DEVICE(log_system, LOGGER_LOG_SYSTEM, CONFIG_LOGCAT_SIZE*1024)
 
 /* logger_offset - returns index 'n' into the log via (optimized) modulus */
 #define logger_offset(n)	((n) & (log->size - 1))
@@ -386,15 +422,25 @@ static void do_write_log(struct logger_log *log, const void *buf, size_t count)
 	if (logger_mode == 0)
 	{
 			return;
-	} 
-        
+	}
+
 	len = min(count, log->size - log->w_off);
 	memcpy(log->buffer + log->w_off, buf, len);
 
 	if (count != len)
 		memcpy(log->buffer, buf + len, count - len);
 
-	log->w_off = logger_offset(log->w_off + count);
+	/*
+	 * If the buffer is written beyond the end, and if the type of the log is
+	 * events log. State variable of the log variable is changed
+	 * from 0 to 1. As a result, the 0 and 1 is written to
+	 * /sys/devices/virtual/switch/logger-events/state file descriptor.
+	 */
+	if ((log->w_off + count) > log->size && log == &log_events) {
+		switch_set_state(&logger_dev, 0);
+		switch_set_state(&logger_dev, 1);
+	}
+    log->w_off = logger_offset(log->w_off + count);
 
 }
 
@@ -425,7 +471,17 @@ static ssize_t do_write_log_from_user(struct logger_log *log,
 		if (copy_from_user(log->buffer, buf + len, count - len))
 			return -EFAULT;
 
-	log->w_off = logger_offset(log->w_off + count);
+	/*
+	 * If the buffer is written beyond the end, and if the type of the log is
+	 * events log. State variable of the log variable is changed
+	 * from 0 to 1. As a result, the 0 and 1 is written to
+	 * /sys/devices/virtual/switch/logger-events/state file descriptor.
+	 */
+	if ((log->w_off + count) > log->size && log == &log_events) {
+		switch_set_state(&logger_dev, 0);
+		switch_set_state(&logger_dev, 1);
+	}
+    log->w_off = logger_offset(log->w_off + count);
 
 	return count;
 }
@@ -700,33 +756,6 @@ static const struct file_operations logger_fops = {
 	.release = logger_release,
 };
 
-/*
- * Defines a log structure with name 'NAME' and a size of 'SIZE' bytes, which
- * must be a power of two, and greater than
- * (LOGGER_ENTRY_MAX_PAYLOAD + sizeof(struct logger_entry)).
- */
-#define DEFINE_LOGGER_DEVICE(VAR, NAME, SIZE) \
-static unsigned char _buf_ ## VAR[SIZE]; \
-static struct logger_log VAR = { \
-	.buffer = _buf_ ## VAR, \
-	.misc = { \
-		.minor = MISC_DYNAMIC_MINOR, \
-		.name = NAME, \
-		.fops = &logger_fops, \
-		.parent = NULL, \
-	}, \
-	.wq = __WAIT_QUEUE_HEAD_INITIALIZER(VAR .wq), \
-	.readers = LIST_HEAD_INIT(VAR .readers), \
-	.mutex = __MUTEX_INITIALIZER(VAR .mutex), \
-	.w_off = 0, \
-	.head = 0, \
-	.size = SIZE, \
-};
-
-DEFINE_LOGGER_DEVICE(log_main, LOGGER_LOG_MAIN, CONFIG_LOGCAT_SIZE*1024)
-DEFINE_LOGGER_DEVICE(log_events, LOGGER_LOG_EVENTS, CONFIG_LOGCAT_SIZE*1024)
-DEFINE_LOGGER_DEVICE(log_radio, LOGGER_LOG_RADIO, CONFIG_LOGCAT_SIZE*1024)
-DEFINE_LOGGER_DEVICE(log_system, LOGGER_LOG_SYSTEM, CONFIG_LOGCAT_SIZE*1024)
 
 static struct logger_log *get_log_from_minor(int minor)
 {
@@ -745,6 +774,7 @@ static int __init init_log(struct logger_log *log)
 {
 	int ret;
 
+	log->misc.fops = &logger_fops;
 	ret = misc_register(&log->misc);
 	if (unlikely(ret)) {
 		printk(KERN_ERR "logger: failed to register misc "
@@ -769,6 +799,10 @@ static int __init logger_init(void)
 	ret = init_log(&log_events);
 	if (unlikely(ret))
 		goto out;
+
+	// Create a switch_dev node to detect overflows.
+	logger_dev.name = "logger-events";
+	switch_dev_register(&logger_dev);
 
 	ret = init_log(&log_radio);
 	if (unlikely(ret))

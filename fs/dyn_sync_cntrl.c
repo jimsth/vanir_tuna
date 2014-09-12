@@ -42,6 +42,28 @@ static ssize_t dyn_fsync_active_show(struct kobject *kobj,
 	return sprintf(buf, "%u\n", (dyn_fsync_active ? 1 : 0));
 }
 
+static void sync_inodes_one_sb(struct super_block *sb, void *arg)
+{
+    if (!(sb->s_flags & MS_RDONLY))
+        sync_inodes_sb(sb);
+}
+
+static void sync_fs_one_sb(struct super_block *sb, void *arg)
+{
+    if (!(sb->s_flags & MS_RDONLY) && sb->s_op->sync_fs)
+        sb->s_op->sync_fs(sb, *(int *)arg);
+}
+
+static void fdatawrite_one_bdev(struct block_device *bdev, void *arg)
+{
+    filemap_fdatawrite(bdev->bd_inode->i_mapping);
+}
+
+static void fdatawait_one_bdev(struct block_device *bdev, void *arg)
+{
+    filemap_fdatawait(bdev->bd_inode->i_mapping);
+}
+
 static ssize_t dyn_fsync_active_store(struct kobject *kobj,
 		struct kobj_attribute *attr, const char *buf, size_t count)
 {
@@ -78,15 +100,15 @@ static ssize_t dyn_fsync_earlysuspend_show(struct kobject *kobj,
 	return sprintf(buf, "early suspend active: %u\n", early_suspend_active);
 }
 
-static struct kobj_attribute dyn_fsync_active_attribute = 
+static struct kobj_attribute dyn_fsync_active_attribute =
 	__ATTR(Dyn_fsync_active, 0666,
 		dyn_fsync_active_show,
 		dyn_fsync_active_store);
 
-static struct kobj_attribute dyn_fsync_version_attribute = 
+static struct kobj_attribute dyn_fsync_version_attribute =
 	__ATTR(Dyn_fsync_version, 0444, dyn_fsync_version_show, NULL);
 
-static struct kobj_attribute dyn_fsync_earlysuspend_attribute = 
+static struct kobj_attribute dyn_fsync_earlysuspend_attribute =
 	__ATTR(Dyn_fsync_earlysuspend, 0444, dyn_fsync_earlysuspend_show, NULL);
 
 static struct attribute *dyn_fsync_active_attrs[] =
@@ -106,10 +128,14 @@ static struct kobject *dyn_fsync_kobj;
 
 static void dyn_fsync_force_flush(void)
 {
+    int nowait = 0, wait = 1;
+
 	/* flush all outstanding buffers */
-	wakeup_flusher_threads(0);
-	sync_filesystems(0);
-	sync_filesystems(1);
+    iterate_supers(sync_inodes_one_sb, NULL);
+    iterate_supers(sync_fs_one_sb, &nowait);
+    iterate_supers(sync_fs_one_sb, &wait);
+    iterate_bdevs(fdatawrite_one_bdev, NULL);
+    iterate_bdevs(fdatawait_one_bdev, NULL);
 }
 
 static void dyn_fsync_early_suspend(struct early_suspend *h)
